@@ -1,0 +1,221 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Curve Crash Clone</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: black;
+      overflow: hidden;
+      cursor: none;
+    }
+    canvas {
+      display: block;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: monospace;
+      font-size: 14px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+<div id="info">Press <b>F</b> for fullscreen</div>
+<script>
+let player;
+let trails = [];
+let gameOver = false;
+let roundStartTime = 0;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  noSmooth();
+  frameRate(1000);
+  startGame();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+
+function draw() {
+  let dt = deltaTime / 1000.0;
+  background(0);
+  handleInput();
+
+  if (!gameOver) {
+    player.update(dt);
+    if (millis() - roundStartTime > 1000) {
+      checkCollisions();
+    }
+    if (!player.isAlive) {
+      gameOver = true;
+      setTimeout(startGame, 500);
+    }
+  }
+
+  drawTrails();
+  drawHUD();
+
+  if (!gameOver) {
+    fill(player.getCurrentColor());
+    noStroke();
+    circle(player.pos.x, player.pos.y, 4);
+  }
+}
+
+function startGame() {
+  trails = [];
+  gameOver = false;
+  roundStartTime = millis();
+
+  let startX = random(100, width - 100);
+  let startY = random(100, height - 100);
+  player = new Player(startX, startY, color(0, 255, 255));
+}
+
+function handleInput() {
+  if (keyIsDown(LEFT_ARROW)) {
+    player.dir = -1;
+  } else if (keyIsDown(RIGHT_ARROW)) {
+    player.dir = 1;
+  } else {
+    player.dir = 0;
+  }
+
+  player.boosting = keyIsDown(SHIFT);
+}
+
+function keyPressed() {
+  if (key === 'f' || key === 'F') {
+    let fs = fullscreen();
+    fullscreen(!fs);
+  }
+}
+
+class Player {
+  constructor(x, y, col) {
+    this.pos = createVector(x, y);
+    this.prevPos = this.pos.copy();
+    this.angle = random(TWO_PI);
+    this.dir = 0;
+    this.boosting = false;
+
+    this.baseSpeed = 250;
+    this.acceleration = 400;
+    this.deceleration = 300;
+    this.speed = this.baseSpeed;
+
+    this.baseTurnSpeed = 10.0;
+
+    this.color = col;
+    this.isAlive = true;
+    this.id = floor(random(100000));
+
+    this.gapInterval = 1500;
+    this.gapDuration = 100;
+    this.lastGapStart = millis();
+    this.lastTrailTime = 0;
+  }
+
+  update(dt) {
+    if (!this.isAlive) return;
+
+    this.prevPos = this.pos.copy();
+
+    if (this.boosting) {
+      this.speed += this.acceleration * dt;
+    } else {
+      this.speed -= this.deceleration * dt;
+    }
+
+    this.speed = max(this.speed, this.baseSpeed);
+    this.angle += this.dir * this.baseTurnSpeed * dt;
+
+    const velocity = p5.Vector.fromAngle(this.angle).mult(this.speed * dt);
+    this.pos.add(velocity);
+
+    const now = millis();
+    const inGap = (now - this.lastGapStart) < this.gapDuration;
+
+    if (now - this.lastGapStart > this.gapInterval + this.gapDuration) {
+      this.lastGapStart = now;
+    }
+
+    if (!inGap && now - this.lastTrailTime > 4) {
+      let trailColor = this.boosting ? color(0, 255, 0) : this.getCurrentColor();
+      trails.push({
+        from: this.prevPos.copy(),
+        to: this.pos.copy(),
+        col: trailColor,
+        owner: this.id,
+        time: now
+      });
+      this.lastTrailTime = now;
+    }
+
+    if (
+      this.pos.x < 0 || this.pos.x > width ||
+      this.pos.y < 0 || this.pos.y > height
+    ) {
+      this.isAlive = false;
+    }
+  }
+
+  getCurrentColor() {
+    return millis() - roundStartTime < 1000 ? color(150) : this.color;
+  }
+}
+
+function drawTrails() {
+  strokeWeight(4); // 🔁 Increased radius here
+  for (let t of trails) {
+    stroke(t.col);
+    line(t.from.x, t.from.y, t.to.x, t.to.y);
+  }
+}
+
+function checkCollisions() {
+  for (let t of trails) {
+    if (t.owner === player.id && millis() - t.time < 100) continue;
+    let d = distToSegment(player.pos, t.from, t.to);
+    if (d < 4) {
+      player.isAlive = false;
+      break;
+    }
+  }
+}
+
+function drawHUD() {
+  fill(255);
+  noStroke();
+  textSize(16);
+  textAlign(RIGHT, TOP);
+
+  let timeAlive = (millis() - roundStartTime) / 1000;
+  text(`Time: ${floor(timeAlive)}s`, width - 8, 8);
+  text("Press SHIFT to boost", width - 8, 30);
+  text("Use ← → to turn", width - 8, 52);
+}
+
+function distToSegment(p, v, w) {
+  let l2 = p5.Vector.dist(v, w) ** 2;
+  if (l2 === 0) return p5.Vector.dist(p, v);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = max(0, min(1, t));
+  let projection = createVector(
+    v.x + t * (w.x - v.x),
+    v.y + t * (w.y - v.y)
+  );
+  return p5.Vector.dist(p, projection);
+}
+</script>
+</body>
+</html>
